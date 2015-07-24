@@ -4,6 +4,7 @@ module.exports = class Indentation
     rule:
         name: 'indentation'
         value : 2
+        use: 'spaces'
         level : 'error'
         message : 'Line contains inconsistent indentation'
         description: """
@@ -34,6 +35,7 @@ module.exports = class Indentation
         { lines, lineNumber } = tokenApi
 
         expected = tokenApi.config[@rule.name].value
+        use_tabs = tokenApi.config[@rule.name].use is 'tabs'
 
         # See: 'Indented chained invocations with bad indents'
         # This actually checks the chained call to see if its properly indented
@@ -45,7 +47,7 @@ module.exports = class Indentation
             currentLine = lines[lineNumber]
 
             if currentLine.match(/\S/i)?[0] is '.'
-                return @handleChain(tokenApi, expected)
+                return @handleChain(tokenApi, expected, use_tabs)
             return undefined
 
         if type in ['[', ']']
@@ -76,16 +78,15 @@ module.exports = class Indentation
         isMultiline = previousSymbol in ['=', ',']
 
         # Summarize the indentation conditions we'd like to ignore
-        ignoreIndent = isInterpIndent or isArrayIndent or isMultiline
+        return undefined if isInterpIndent or isArrayIndent or isMultiline
 
         # Correct CoffeeScript's incorrect INDENT token value when functions
         # get chained. See https://github.com/jashkenas/coffeescript/issues/3137
         # Also see CoffeeLint Issues: #4, #88, #128, and many more.
-        numIndents = @getCorrectIndent(tokenApi)
 
         # Now check the indentation.
-        if not ignoreIndent and numIndents isnt expected
-            return { context: "Expected #{expected} got #{numIndents}" }
+        return @checkIndent(tokenApi, expected, use_tabs)
+
 
     # Return true if the current token is inside of an array.
     inArray: () ->
@@ -102,7 +103,7 @@ module.exports = class Indentation
         # anything here.
         null
 
-    handleChain: (tokenApi, expected) ->
+    handleChain: (tokenApi, expected, use_tabs) ->
         lastCheck = 1
         callStart = 1
         prevNum = 1
@@ -146,12 +147,20 @@ module.exports = class Indentation
                 if prevIsIndent and currIsIndent
                     numIndents = currentSpaces
 
+                context = ''
                 if numIndents % expected isnt 0
-                    return { context: "Expected #{expected} got #{numIndents}" }
+                    context = "Expected #{expected} got #{numIndents}"
+
+                if use_tabs and currentSpaces > currentLine.indexOf ' '
+                    context += ' Line contains space indentation.'
+
+                if context
+                    return { context: context }
+                return undefined
 
     # Returns a corrected INDENT value if the current line is part of
     # a chained call. Otherwise returns original INDENT value.
-    getCorrectIndent: (tokenApi) ->
+    checkIndent: (tokenApi, expected, use_tabs) ->
         { lineNumber, lines, tokens, i } = tokenApi
 
         curIndent = lines[lineNumber].match(/\S/)?.index
@@ -162,7 +171,20 @@ module.exports = class Indentation
         prevLine = lines[lineNumber - prevNum]
         prevIndent = prevLine.match(/^(\s*)\./)?[1].length
 
+        numIndents = 0
         if prevIndent > 0
-            return curIndent - prevLine.match(/\S/)?.index
+            numIndents = curIndent - prevLine.match(/\S/)?.index
         else
-            return tokens[i][1]
+            numIndents = tokens[i][1]
+
+        context = ''
+        if numIndents isnt expected
+            context = "Expected #{expected} got #{numIndents}"
+
+        if use_tabs and curIndent > currentLine.indexOf ' '
+            context += ' Line contains space indentation.'
+
+        if context
+            return { context: context }
+
+        return undefined
